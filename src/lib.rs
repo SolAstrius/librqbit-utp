@@ -43,6 +43,6 @@ pub use socket::{
 pub use stream::UtpStream;
 pub use stream_rx::UtpStreamReadHalf;
 pub use stream_tx::UtpStreamWriteHalf;
-pub use traits::Transport;
+pub use traits::{DefaultUtpEnvironment, Transport, UtpEnvironment};
 
 type Payload = Vec<u8>;
