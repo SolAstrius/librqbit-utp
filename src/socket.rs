@@ -365,7 +365,7 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
             }
             control_request = self.control_rx.recv() => {
                 let control = control_request.unwrap();
-                METRICS.control_channel_depth.record(self.control_rx.len() as f64);
+                METRICS.control_channel_depth.decrement(1);
                 self.on_control(control).await;
             },
             recv = self.socket.transport.recv_from(read_buf) => {
@@ -887,7 +887,9 @@ impl<T: Transport, Env: UtpEnvironment> UtpSocket<T, Env> {
             token,
             RequestWithSpan::new(tx),
         )) {
-            Ok(()) => {}
+            Ok(()) => {
+                METRICS.control_channel_depth.increment(1);
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 return Err(Error::TooManyConnections);
             }
