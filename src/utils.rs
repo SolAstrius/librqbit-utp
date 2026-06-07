@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, task::Waker};
 
-use tokio::sync::mpsc::{UnboundedSender, WeakUnboundedSender};
+use tokio::sync::mpsc;
 
 use crate::Error;
 
@@ -60,11 +60,11 @@ pub fn prepare_2_ioslices<'a>(
 
 pub(crate) struct DropGuardSendBeforeDeath<Msg> {
     msg: Option<Msg>,
-    tx: WeakUnboundedSender<Msg>,
+    tx: mpsc::WeakSender<Msg>,
 }
 
 impl<Msg> DropGuardSendBeforeDeath<Msg> {
-    pub fn new(msg: Msg, tx: &UnboundedSender<Msg>) -> Self {
+    pub fn new(msg: Msg, tx: &mpsc::Sender<Msg>) -> Self {
         Self {
             msg: Some(msg),
             tx: tx.downgrade(),
@@ -80,7 +80,7 @@ impl<Msg> Drop for DropGuardSendBeforeDeath<Msg> {
     fn drop(&mut self) {
         if let Some(msg) = self.msg.take() {
             if let Some(tx) = self.tx.upgrade() {
-                let _ = tx.send(msg);
+                let _ = tx.try_send(msg);
             }
         }
     }

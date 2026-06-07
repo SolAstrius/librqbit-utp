@@ -72,6 +72,7 @@ create_metrics!(
     gauge accepting,
     counter accepts,
     gauge connecting,
+    gauge control_channel_depth,
     counter connection_attempts,
     counter connection_failures,
     counter connection_successes,
