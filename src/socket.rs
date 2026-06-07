@@ -36,7 +36,7 @@ use crate::{
     utils::{DropGuardSendBeforeDeath, FnDropGuard},
 };
 use tokio::sync::{
-    mpsc::{self, unbounded_channel, UnboundedSender},
+    mpsc::{self, UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot,
 };
 use tracing::{debug, debug_span, trace, warn};
@@ -293,7 +293,6 @@ impl ConnectingPerAddr {
 
 const ACCEPT_QUEUE_MAX_ACCEPTORS: usize = 32;
 const ACCEPT_QUEUE_MAX_SYNS: usize = 32;
-const CONTROL_CHANNEL_CAPACITY: usize = 4096;
 
 struct Syn {
     remote: SocketAddr,
@@ -339,7 +338,7 @@ pub(crate) struct Dispatcher<T: Transport, E: UtpEnvironment> {
     // TODO: we need to insert here only once!
     pub(crate) streams: HashMap<StreamRecvKey, UnboundedSender<UtpMessage>>,
     connecting: HashMap<SocketAddr, ConnectingPerAddr>,
-    control_rx: mpsc::Receiver<ControlRequest>,
+    control_rx: UnboundedReceiver<ControlRequest>,
     next_connection_id: SeqNr,
 }
 
@@ -365,7 +364,10 @@ impl<T: Transport, E: UtpEnvironment> Dispatcher<T, E> {
             }
             control_request = self.control_rx.recv() => {
                 let control = control_request.unwrap();
-                METRICS.control_channel_depth.decrement(1);
+                // Report the remaining backlog after draining one message. Reading the
+                // receiver's actual length is robust regardless of how many distinct
+                // senders (ConnectRequest/ConnectDropped/Shutdown) feed the channel.
+                METRICS.control_channel_depth.set(self.control_rx.len() as f64);
                 self.on_control(control).await;
             },
             recv = self.socket.transport.recv_from(read_buf) => {
@@ -681,7 +683,7 @@ pub struct UtpSocket<T, E> {
     pub(crate) transport: T,
     // When was the socket created. All the uTP "timestamp_microsends" are relative to it.
     pub(crate) created: Instant,
-    pub(crate) control_requests: mpsc::Sender<ControlRequest>,
+    pub(crate) control_requests: UnboundedSender<ControlRequest>,
     accept_requests: mpsc::Sender<Acceptor<T, E>>,
 
     pub(crate) env: E,
@@ -807,7 +809,7 @@ impl<T: Transport, Env: UtpEnvironment> UtpSocket<T, Env> {
         let local_addr = sock.bind_addr();
 
         let (accept_tx, accept_rx) = mpsc::channel(ACCEPT_QUEUE_MAX_ACCEPTORS);
-        let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_CAPACITY);
+        let (control_tx, control_rx) = unbounded_channel();
 
         let sock = Arc::new(Self {
             transport: sock,
@@ -882,21 +884,14 @@ impl<T: Transport, Env: UtpEnvironment> UtpSocket<T, Env> {
             METRICS.connecting.decrement(1);
         });
 
-        match self.control_requests.try_send(ControlRequest::ConnectRequest(
-            remote,
-            token,
-            RequestWithSpan::new(tx),
-        )) {
-            Ok(()) => {
-                METRICS.control_channel_depth.increment(1);
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                return Err(Error::TooManyConnections);
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                return Err(Error::DispatcherDead);
-            }
-        }
+        self.control_requests
+            .send(ControlRequest::ConnectRequest(
+                remote,
+                token,
+                RequestWithSpan::new(tx),
+            ))
+            .ok()
+            .ok_or(Error::DispatcherDead)?;
 
         let mut send_drop_guard = DropGuardSendBeforeDeath::new(
             ControlRequest::ConnectDropped(remote, token),

@@ -70,9 +70,6 @@ pub enum Error {
     #[error("too many active connections")]
     TooManyActiveConnections,
 
-    #[error("too many pending connect requests")]
-    TooManyConnections,
-
     #[error("max number of retransmissions reached")]
     MaxRetransmissionsReached,
     #[error("max syn-ack retransmissions reached")]

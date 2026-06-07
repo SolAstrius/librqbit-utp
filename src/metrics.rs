@@ -49,6 +49,7 @@ macro_rules! create_metrics {
             pub fn increment<T>(&self, _: T) {}
             pub fn decrement<T>(&self, _: T) {}
             pub fn record<T>(&self, _: T) {}
+            pub fn set<T>(&self, _: T) {}
         }
         pub struct Metrics {
             $(
